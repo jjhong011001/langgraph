@@ -2570,28 +2570,42 @@ def test_tool_node_list_return_mixed_with_regular_tool() -> None:
 
 
 @pytest.mark.anyio
-async def test_async_tool_failure_settles_running_sibling() -> None:
-    started = asyncio.Event()
+@pytest.mark.parametrize(
+    "committed_before_failure",
+    [
+        pytest.param(False, id="before-write"),
+        pytest.param(True, id="after-write"),
+    ],
+)
+async def test_async_tool_failure_settles_running_sibling(
+    committed_before_failure: bool,
+) -> None:
+    ready_to_fail = asyncio.Event()
     release = asyncio.Event()
     finished = asyncio.Event()
-    wrote = False
+    write_count = 0
 
     @dec_tool
     async def fail() -> str:
-        """Wait until the other tool has started, then fail."""
-        await started.wait()
+        """Fail at the selected point in the sibling tool."""
+        await ready_to_fail.wait()
         raise ValueError("tool failed")
 
     @dec_tool
     async def write() -> str:
-        """Record an effect after the release event."""
-        nonlocal wrote
-        started.set()
+        """Record one synthetic external write."""
+        nonlocal write_count
         try:
+            if committed_before_failure:
+                write_count += 1
+            ready_to_fail.set()
             await release.wait()
-            wrote = True
+            if not committed_before_failure:
+                write_count += 1
             return "wrote"
         finally:
+            # Suspend during cleanup so the caller must wait for it to finish.
+            await asyncio.sleep(0)
             finished.set()
 
     graph = (
@@ -2603,9 +2617,12 @@ async def test_async_tool_failure_settles_running_sibling() -> None:
     calls = [{"name": name, "args": {}, "id": name} for name in ("fail", "write")]
     try:
         with pytest.raises(ValueError, match="tool failed"):
-            await graph.ainvoke({"messages": [AIMessage("", tool_calls=calls)]})
+            await asyncio.wait_for(
+                graph.ainvoke({"messages": [AIMessage("", tool_calls=calls)]}),
+                timeout=5,
+            )
         assert finished.is_set()
+        assert write_count == (1 if committed_before_failure else 0)
     finally:
         release.set()
         await asyncio.wait_for(finished.wait(), timeout=2)
-    assert not wrote
