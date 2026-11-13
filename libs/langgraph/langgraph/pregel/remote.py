@@ -379,7 +379,9 @@ class RemoteGraph(PregelProtocol):
             interrupts=tuple([i for task in tasks for i in task.interrupts]),
         )
 
-    def _get_checkpoint(self, config: RunnableConfig | None) -> Checkpoint | None:
+    def _get_checkpoint(
+        self, config: RunnableConfig | None, *, include_thread_only: bool = True
+    ) -> Checkpoint | None:
         if config is None:
             return None
 
@@ -394,7 +396,11 @@ class RemoteGraph(PregelProtocol):
         if "checkpoint_map" in config["configurable"]:
             checkpoint["checkpoint_map"] = config["configurable"]["checkpoint_map"]
 
-        return checkpoint if checkpoint else None
+        if not checkpoint or (
+            not include_thread_only and checkpoint.keys() == {"thread_id"}
+        ):
+            return None
+        return checkpoint
 
     def _get_config(self, checkpoint: Checkpoint) -> RunnableConfig:
         return {
@@ -464,7 +470,7 @@ class RemoteGraph(PregelProtocol):
 
         state = sync_client.threads.get_state(
             thread_id=merged_config["configurable"]["thread_id"],
-            checkpoint=self._get_checkpoint(merged_config),
+            checkpoint=self._get_checkpoint(merged_config, include_thread_only=False),
             subgraphs=subgraphs,
             headers=headers,
             params=params,
@@ -500,7 +506,7 @@ class RemoteGraph(PregelProtocol):
 
         state = await client.threads.get_state(
             thread_id=merged_config["configurable"]["thread_id"],
-            checkpoint=self._get_checkpoint(merged_config),
+            checkpoint=self._get_checkpoint(merged_config, include_thread_only=False),
             subgraphs=subgraphs,
             headers=headers,
             params=params,
