@@ -2566,3 +2566,44 @@ def test_tool_node_list_return_mixed_with_regular_tool() -> None:
     tool_call_ids = {m.tool_call_id for m in all_msgs}
     assert list_tool_id in tool_call_ids
     assert regular_tool_id in tool_call_ids
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_tool_state_override_isolated_per_call(async_mode: bool) -> None:
+    class State(MessagesState):
+        topic: str
+
+    @dec_tool
+    def read_topic(
+        topic: Annotated[str, InjectedState("topic")], runtime: ToolRuntime
+    ) -> str:
+        """Return the injected topic from both inputs."""
+        return f"{topic}:{runtime.state['topic']}"
+
+    def wrap(request, execute):
+        state = {**request.state, "topic": request.tool_call["id"]}
+        return execute(request.override(state=state))
+
+    async def awrap(request, execute):
+        state = {**request.state, "topic": request.tool_call["id"]}
+        return await execute(request.override(state=state))
+
+    graph = (
+        StateGraph(State)
+        .add_node(
+            "tools", ToolNode([read_topic], wrap_tool_call=wrap, awrap_tool_call=awrap)
+        )
+        .add_edge(START, "tools")
+        .compile()
+    )
+    calls = [
+        {"name": "read_topic", "args": {}, "id": name} for name in ("first", "second")
+    ]
+    state = {"topic": "original", "messages": [AIMessage("", tool_calls=calls)]}
+    result = await graph.ainvoke(state) if async_mode else graph.invoke(state)
+    assert result["topic"] == "original"
+    assert [msg.content for msg in result["messages"][-2:]] == [
+        "first:first",
+        "second:second",
+    ]
