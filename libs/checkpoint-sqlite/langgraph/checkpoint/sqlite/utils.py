@@ -65,11 +65,17 @@ def _metadata_predicate(
     # process metadata query
     for query_key, query_value in metadata_filter.items():
         _validate_filter_key(query_key)
-        operator, param_value = _where_value(query_value)
-        predicates.append(
-            f"json_extract(CAST(metadata AS TEXT), '$.{query_key}') {operator}"
-        )
-        param_values.append(param_value)
+        path = f"$.{query_key}"
+        metadata = "CAST(metadata AS TEXT)"
+        if isinstance(query_value, int) and not -(2**63) <= query_value < 2**63:
+            # With multiple paths json_extract returns JSON text, preserving
+            # the full integer instead of rounding it to a SQLite REAL.
+            predicates.append(f"json_extract({metadata}, '{path}', '{path}') = ?")
+            param_values.append(f"[{query_value},{query_value}]")
+        else:
+            operator, param_value = _where_value(query_value)
+            predicates.append(f"json_extract({metadata}, '{path}') {operator}")
+            param_values.append(param_value)
 
     return (predicates, param_values)
 

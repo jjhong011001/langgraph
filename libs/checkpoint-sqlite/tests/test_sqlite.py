@@ -307,3 +307,17 @@ class TestSqliteSaver:
             # Nested digit-starting key via dotted path
             results = list(saver.list(None, filter={"user.123abc": "ok2"}))
             assert len(results) == 1
+
+
+def test_metadata_filter_matches_large_integers_exactly() -> None:
+    ids = (-(2**63) - 1, -(2**63) - 2, 2**63 - 1, 2**63, 2**63 + 1, str(2**63))
+    with SqliteSaver.from_conn_string(":memory:") as saver:
+        config = {"configurable": {"thread_id": "t", "checkpoint_ns": ""}}
+        for record_id in ids:
+            saver.put(config, empty_checkpoint(), {"record_id": record_id}, {})
+        for record_id in ids:
+            matches = [
+                saved.metadata["record_id"]
+                for saved in saver.list(config, filter={"record_id": record_id})
+            ]
+            assert matches == [record_id]
