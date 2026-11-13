@@ -140,8 +140,8 @@ def test_projection_registry_typed_decoded_and_custom():
 
 def test_channel_projection_decodes_params_data():
     sdk = MagicMock()
-    # Real wire events carry `method`; the SDK `DataDecoder` yields matching
-    # events' `params.data` and skips dataless and off-channel ones.
+    # The projection yields matching events' `params.data` and skips dataless
+    # and off-channel events.
     sdk.subscribe = MagicMock(
         return_value=iter(
             [
@@ -656,3 +656,24 @@ async def test_astream_events_non_v3_raises_not_implemented():
     rg = RemoteGraph("agent", client=MagicMock(), sync_client=MagicMock())
     with pytest.raises(NotImplementedError, match="not implemented"):
         await rg.astream_events({"x": 1}, version="v2")
+
+
+@pytest.mark.anyio
+async def test_custom_projection_preserves_explicit_null():
+    events = [
+        {"method": "custom", "params": {"data": None}},
+        {"method": "custom", "params": {}},
+        {"method": "custom", "params": {"data": False}},
+        {"method": "custom", "params": {"data": 0}},
+    ]
+    sdk = MagicMock()
+    projection = _ProjectionRegistry(sdk)["custom"]
+    sdk.subscribe.return_value = iter(events)
+    assert list(projection) == [None, False, 0]
+
+    async def subscribe():
+        for event in events:
+            yield event
+
+    sdk.subscribe.return_value = subscribe()
+    assert [item async for item in projection] == [None, False, 0]

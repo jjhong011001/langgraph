@@ -11,7 +11,6 @@ from langchain_core.runnables import RunnableConfig
 from langgraph_sdk._async.stream import AsyncThreadStream
 from langgraph_sdk._sync.stream import SyncThreadStream
 from langgraph_sdk.client import LangGraphClient, SyncLangGraphClient
-from langgraph_sdk.stream.decoders import DataDecoder
 
 from langgraph.types import Command
 
@@ -44,13 +43,9 @@ def _translate_command_input(input: Any) -> Any:
 class _ChannelProjection:
     """Decoded projection for a wire channel the SDK doesn't type natively.
 
-    Subscribes to `channel` and decodes each event's `params["data"]` through the
-    SDK's `DataDecoder` — the same decoder the SDK's own plain-payload projections
-    (`values` / `updates` / `checkpoints` / `tasks`) use, which yields the item
-    shape that local's `UpdatesTransformer` / `CheckpointsTransformer` /
-    `TasksTransformer` / `CustomTransformer` push, so iterating this matches the
-    corresponding local projection. Iterate with `for` against a sync stream and
-    `async for` against an async stream (matching the underlying SDK). Opening
+    Subscribes to `channel` and yields each matching event's `params["data"]`,
+    including explicit null payloads, to match the local projections. Iterate
+    with `for` against a sync stream and `async for` against an async stream. Opening
     the subscription requires the stream to be entered (`with` / `async with`).
     """
 
@@ -58,22 +53,26 @@ class _ChannelProjection:
         self._sdk = sdk
         self._channel = channel
 
+    def _payloads(self, event: Mapping[str, Any]) -> Iterator[Any]:
+        if event.get("method") == self._channel:
+            params = event.get("params") or {}
+            if "data" in params:
+                yield params["data"]
+
     def __iter__(self) -> Iterator[Any]:
         # Sync lane: the sync adapter's SDK returns a sync iterator here.
-        decoder = DataDecoder(self._channel)
         events = cast(Iterator[Any], self._sdk.subscribe([self._channel]))
         for event in events:
-            yield from decoder.feed(event)
+            yield from self._payloads(event)
 
     def __aiter__(self) -> AsyncIterator[Any]:
         return self._aiter()
 
     async def _aiter(self) -> AsyncIterator[Any]:
         # Async lane: the async adapter's SDK returns an async iterator here.
-        decoder = DataDecoder(self._channel)
         events = cast(AsyncIterator[Any], self._sdk.subscribe([self._channel]))
         async for event in events:
-            for item in decoder.feed(event):
+            for item in self._payloads(event):
                 yield item
 
 
