@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import dataclasses
 import json
@@ -2566,3 +2567,45 @@ def test_tool_node_list_return_mixed_with_regular_tool() -> None:
     tool_call_ids = {m.tool_call_id for m in all_msgs}
     assert list_tool_id in tool_call_ids
     assert regular_tool_id in tool_call_ids
+
+
+@pytest.mark.anyio
+async def test_async_tool_failure_settles_running_sibling() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+    wrote = False
+
+    @dec_tool
+    async def fail() -> str:
+        """Wait until the other tool has started, then fail."""
+        await started.wait()
+        raise ValueError("tool failed")
+
+    @dec_tool
+    async def write() -> str:
+        """Record an effect after the release event."""
+        nonlocal wrote
+        started.set()
+        try:
+            await release.wait()
+            wrote = True
+            return "wrote"
+        finally:
+            finished.set()
+
+    graph = (
+        StateGraph(MessagesState)
+        .add_node("tools", ToolNode([fail, write], handle_tool_errors=False))
+        .add_edge(START, "tools")
+        .compile()
+    )
+    calls = [{"name": name, "args": {}, "id": name} for name in ("fail", "write")]
+    try:
+        with pytest.raises(ValueError, match="tool failed"):
+            await graph.ainvoke({"messages": [AIMessage("", tool_calls=calls)]})
+        assert finished.is_set()
+    finally:
+        release.set()
+        await asyncio.wait_for(finished.wait(), timeout=2)
+    assert not wrote

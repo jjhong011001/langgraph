@@ -860,10 +860,20 @@ class ToolNode(RunnableCallable):
             tool_runtimes.append(tool_runtime)
 
         # Pass original tool calls without injection
-        coros = []
-        for call, tool_runtime in zip(tool_calls, tool_runtimes, strict=False):
-            coros.append(self._arun_one(call, input_type, tool_runtime))  # type: ignore[arg-type]
-        outputs = await asyncio.gather(*coros)
+        tasks = [
+            asyncio.create_task(self._arun_one(call, input_type, tool_runtime))  # type: ignore[arg-type]
+            for call, tool_runtime in zip(tool_calls, tool_runtimes, strict=False)
+        ]
+        try:
+            outputs = await asyncio.gather(*tasks)
+        except GraphBubbleUp:
+            # Let sibling calls finish when a tool interrupts the graph.
+            raise
+        except Exception:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
         return self._combine_tool_outputs(outputs, input_type)
 
