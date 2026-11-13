@@ -63,7 +63,8 @@ class SqliteCache(BaseCache[ValueT]):
                 if expiry is not None and now > expiry:
                     # purge expired entry
                     self._conn.execute(
-                        "DELETE FROM cache WHERE (ns, key) = (?, ?)", (ns, key)
+                        "DELETE FROM cache WHERE (ns, key) = (?, ?) AND expiry < ?",
+                        (ns, key, now),
                     )
                     continue
                 values[(tuple(ns.split(",")), key)] = self.serde.loads_typed(
