@@ -720,3 +720,36 @@ class TestPreDeltaBlobTerminator:
         assert "PRE-DELTA-WRITE" in values
         # And the pending write at the target is never folded in.
         assert "PENDING-AT-TARGET" not in values
+
+
+def test_global_checkpoint_order_supports_pagination() -> None:
+    async def check() -> None:
+        saver = InMemorySaver()
+        for thread, namespace, checkpoint_id in [
+            ("first", "", "001"),
+            ("second", "", "003"),
+            ("first", "nested", "002"),
+        ]:
+            checkpoint = empty_checkpoint()
+            checkpoint["id"] = checkpoint_id
+            config = {"configurable": {"thread_id": thread, "checkpoint_ns": namespace}}
+            saver.put(config, checkpoint, {}, {})
+
+        for get_page in (sync_page, async_page):
+            cursor = None
+            result = []
+            for _ in range(3):
+                page = await get_page(saver, cursor)
+                assert len(page) == 1
+                cursor = page[0].config
+                result.append(cursor["configurable"]["checkpoint_id"])
+            assert result == ["003", "002", "001"]
+            assert await get_page(saver, cursor) == []
+
+    async def sync_page(saver, before):
+        return list(saver.list(None, before=before, limit=1))
+
+    async def async_page(saver, before):
+        return [item async for item in saver.alist(None, before=before, limit=1)]
+
+    asyncio.run(check())
