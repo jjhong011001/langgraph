@@ -26,7 +26,7 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite._delta import (
     DELTA_STAGE1_SQL,
     build_delta_channels_writes_history,
-    build_delta_stage2_sql,
+    iter_delta_stage2_queries,
     step_walk_with_row,
 )
 from langgraph.checkpoint.sqlite.utils import (
@@ -571,23 +571,15 @@ class SqliteSaver(BaseCheckpointSaver[str]):
                 ):
                     break
 
-            channels_with_chain = [ch for ch in channels if chain_by_ch[ch]]
-            stage2_sql = build_delta_stage2_sql(
+            stage2_rows: list[tuple[str, str, str, int, str, bytes, str]] = []
+            for sql, params in iter_delta_stage2_queries(
+                thread_id=thread_id,
+                checkpoint_ns=checkpoint_ns,
+                chain_by_ch=chain_by_ch,
                 has_task_path=self._has_task_path,
-                chain_lens=[len(chain_by_ch[ch]) for ch in channels_with_chain],
-            )
-            if stage2_sql:
-                stage2_params: list[Any] = []
-                for ch in channels_with_chain:
-                    stage2_params.extend(
-                        [thread_id, checkpoint_ns, ch, *chain_by_ch[ch]]
-                    )
-                cur.execute(stage2_sql, stage2_params)
-                stage2_rows = cast(
-                    "list[tuple[str, str, str, int, str, bytes, str]]", cur.fetchall()
-                )
-            else:
-                stage2_rows = []
+            ):
+                cur.execute(sql, params)
+                stage2_rows.extend(cur.fetchall())
 
         return build_delta_channels_writes_history(
             channels=channels,

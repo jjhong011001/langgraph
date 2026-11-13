@@ -135,3 +135,47 @@ def test_walk_step_looks_up_the_parent_by_primary_key() -> None:
     assert any(
         step.startswith("SEARCH c ") and "checkpoint_id=?" in step for step in plan
     ), f"recursive step should look up the parent by key, got {plan}"
+
+
+@pytest.mark.parametrize("width", [500, 501])
+def test_sync_walk_restores_wide_checkpoint(width: int) -> None:
+    channels = [f"ch{i}" for i in range(width)]
+    with SqliteSaver.from_conn_string(":memory:") as saver:
+        root = saver.put(CONFIG, _checkpoint("root", {}), {}, {})
+        saver.put_writes(root, [(channel, "first") for channel in channels], "task-1")
+        middle = saver.put(root, _checkpoint("middle", {}), {}, {})
+        saver.put_writes(
+            middle, [(channel, "second") for channel in channels], "task-2"
+        )
+        target = saver.put(middle, _checkpoint("target", {}), {}, {})
+
+        got = saver.get_delta_channel_history(config=target, channels=channels)
+        assert got == {
+            channel: {
+                "writes": [("task-1", channel, "first"), ("task-2", channel, "second")]
+            }
+            for channel in channels
+        }
+
+
+@pytest.mark.parametrize("width", [500, 501])
+async def test_async_walk_restores_wide_checkpoint(width: int) -> None:
+    channels = [f"ch{i}" for i in range(width)]
+    async with AsyncSqliteSaver.from_conn_string(":memory:") as saver:
+        root = await saver.aput(CONFIG, _checkpoint("root", {}), {}, {})
+        await saver.aput_writes(
+            root, [(channel, "first") for channel in channels], "task-1"
+        )
+        middle = await saver.aput(root, _checkpoint("middle", {}), {}, {})
+        await saver.aput_writes(
+            middle, [(channel, "second") for channel in channels], "task-2"
+        )
+        target = await saver.aput(middle, _checkpoint("target", {}), {}, {})
+
+        got = await saver.aget_delta_channel_history(config=target, channels=channels)
+        assert got == {
+            channel: {
+                "writes": [("task-1", channel, "first"), ("task-2", channel, "second")]
+            }
+            for channel in channels
+        }

@@ -21,7 +21,7 @@ ancestor chain's worth of raw blobs as a `fetchall()`-materialized list.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 from langgraph.checkpoint.base import (
@@ -87,6 +87,41 @@ def build_delta_stage2_sql(
             f"AND checkpoint_id IN ({cid_placeholders})"
         )
     return " UNION ALL ".join(branches)
+
+
+def iter_delta_stage2_queries(
+    *,
+    thread_id: str,
+    checkpoint_ns: str,
+    chain_by_ch: Mapping[str, Sequence[str]],
+    has_task_path: bool,
+) -> Iterator[tuple[str, list[str]]]:
+    # The 999-parameter limit on older SQLite builds also keeps each query
+    # below 500 compound terms: each branch binds at least four values.
+    max_params = 999
+    branch_lengths: list[int] = []
+    params: list[str] = []
+    for channel, chain in chain_by_ch.items():
+        for offset in range(0, len(chain), max_params - 3):
+            checkpoint_ids = chain[offset : offset + max_params - 3]
+            if len(params) + len(checkpoint_ids) + 3 > max_params:
+                yield (
+                    build_delta_stage2_sql(
+                        chain_lens=branch_lengths, has_task_path=has_task_path
+                    ),
+                    params,
+                )
+                branch_lengths = []
+                params = []
+            branch_lengths.append(len(checkpoint_ids))
+            params.extend((thread_id, checkpoint_ns, channel, *checkpoint_ids))
+    if branch_lengths:
+        yield (
+            build_delta_stage2_sql(
+                chain_lens=branch_lengths, has_task_path=has_task_path
+            ),
+            params,
+        )
 
 
 def step_walk_with_row(
