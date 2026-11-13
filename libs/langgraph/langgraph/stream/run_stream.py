@@ -174,8 +174,12 @@ class GraphRunStream:
             self._mux.push(event)
             return True
         except StopIteration:
-            self._mux.close()
             self._exhausted = True
+            try:
+                self._mux.close()
+            except Exception:
+                # close() records the failure on the mux before re-raising.
+                pass
             return False
         except Exception as e:
             self._mux.fail(e)
@@ -516,7 +520,11 @@ class AsyncGraphRunStream:
                 return True
             except StopAsyncIteration:
                 self._exhausted = True
-                await self._mux.aclose()
+                try:
+                    await self._mux.aclose()
+                except Exception:
+                    # aclose() records the failure on the mux before re-raising.
+                    pass
                 return False
             except Exception as e:
                 self._exhausted = True

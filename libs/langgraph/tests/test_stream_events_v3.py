@@ -1318,3 +1318,49 @@ def test_getattr_fallback_does_not_recurse_before_init() -> None:
 
     assert hasattr(bare, "anything") is False
     assert copy.copy(bare) is not None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_finalizer_error_is_terminal(async_mode: bool) -> None:
+    finalized = []
+    error = RuntimeError("finalization failed")
+
+    class Finalizer(StreamTransformer):
+        def init(self) -> dict[str, Any]:
+            return {}
+
+        def process(self, event: ProtocolEvent) -> bool:
+            return True
+
+        def finalize(self) -> None:
+            finalized.append(True)
+            raise error
+
+    class State(TypedDict):
+        value: int
+
+    graph = (
+        StateGraph(State)
+        .add_node("worker", lambda state: {"value": state["value"] + 1})
+        .add_edge(START, "worker")
+        .compile()
+    )
+    if async_mode:
+        async with await graph.astream_events(
+            {"value": 1}, version="v3", transformers=[Finalizer]
+        ) as run:
+            for _ in range(2):
+                with pytest.raises(RuntimeError) as caught:
+                    await run.output()
+                assert caught.value is error
+    else:
+        with graph.stream_events(
+            {"value": 1}, version="v3", transformers=[Finalizer]
+        ) as run:
+            for _ in range(2):
+                with pytest.raises(RuntimeError) as caught:
+                    _ = run.output
+                assert caught.value is error
+
+    assert finalized == [True]

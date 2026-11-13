@@ -316,12 +316,13 @@ class StreamMux:
             except BaseException as e:
                 if first_error is None:
                     first_error = e
+        if first_error is not None:
+            self.fail(first_error)
+            raise first_error
         for ch in self._channels:
             if not ch._closed:
                 ch.close()
         self._events.close()
-        if first_error is not None:
-            raise first_error
 
     def fail(self, err: BaseException) -> None:
         """Fail all transformers, projections, and the main log.
@@ -386,7 +387,7 @@ class StreamMux:
 
         If any scheduled task raised under `on_error="raise"`, or any
         transformer's `afinalize` raises, the exception propagates.
-        The caller (the pump) handles it by routing into `afail`.
+        The mux records it with `afail` before re-raising.
 
         Raises:
             BaseException: The first scheduled-task or `afinalize`
@@ -405,6 +406,7 @@ class StreamMux:
                 None,
             )
             if first_err is not None:
+                await self.afail(first_err)
                 raise first_err
 
         first_error: BaseException | None = None
@@ -414,12 +416,13 @@ class StreamMux:
             except BaseException as e:
                 if first_error is None:
                     first_error = e
+        if first_error is not None:
+            await self.afail(first_error)
+            raise first_error
         for ch in self._channels:
             if not ch._closed:
                 ch.close()
         self._events.close()
-        if first_error is not None:
-            raise first_error
 
     async def afail(self, err: BaseException) -> None:
         """Fail on the async lane.
