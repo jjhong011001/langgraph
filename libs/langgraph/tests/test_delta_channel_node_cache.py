@@ -120,3 +120,57 @@ async def test_a_node_that_fails_is_not_cached_async() -> None:
             await graph.ainvoke(INPUT, {"configurable": {"thread_id": thread}})
 
     assert runs == ["b", "b"]
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_checkpoint_inspection_does_not_compute_cache_keys(async_mode: bool):
+    calls = []
+    inspection = False
+
+    def cache_key(state: dict) -> str:
+        if inspection:
+            raise RuntimeError("cache key should not run during inspection")
+        calls.append(state["value"])
+        return str(state["value"])
+
+    class State(TypedDict):
+        value: int
+
+    def increment(state: State) -> State:
+        return {"value": state["value"] + 1}
+
+    graph = (
+        StateGraph(State)
+        .add_node("worker", increment, cache_policy=CachePolicy(key_func=cache_key))
+        .add_edge(START, "worker")
+        .compile(
+            cache=InMemoryCache(),
+            checkpointer=InMemorySaver(),
+            interrupt_before=["worker"],
+        )
+    )
+    config = {"configurable": {"thread_id": "cache-key-inspection"}}
+    if async_mode:
+        await graph.ainvoke({"value": 1}, config)
+    else:
+        graph.invoke({"value": 1}, config)
+
+    calls.clear()
+    inspection = True
+    if async_mode:
+        snapshot = await graph.aget_state(config)
+        history = [state async for state in graph.aget_state_history(config)]
+    else:
+        snapshot = graph.get_state(config)
+        history = list(graph.get_state_history(config))
+
+    assert snapshot.next == ("worker",)
+    assert history[0].next == ("worker",)
+    assert calls == []
+    inspection = False
+
+    if async_mode:
+        assert await graph.ainvoke(None, config) == {"value": 2}
+    else:
+        assert graph.invoke(None, config) == {"value": 2}
+    assert calls == [1]

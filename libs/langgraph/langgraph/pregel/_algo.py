@@ -357,6 +357,7 @@ def prepare_next_tasks(
     stop: int,
     *,
     for_execution: Literal[False],
+    compute_cache_key: bool = True,
     store: Literal[None] = None,
     checkpointer: Literal[None] = None,
     manager: Literal[None] = None,
@@ -379,6 +380,7 @@ def prepare_next_tasks(
     stop: int,
     *,
     for_execution: Literal[True],
+    compute_cache_key: bool = True,
     store: BaseStore | None,
     checkpointer: BaseCheckpointSaver | None,
     manager: None | ParentRunManager | AsyncParentRunManager,
@@ -400,6 +402,7 @@ def prepare_next_tasks(
     stop: int,
     *,
     for_execution: bool,
+    compute_cache_key: bool = True,
     store: BaseStore | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     manager: None | ParentRunManager | AsyncParentRunManager = None,
@@ -419,6 +422,7 @@ def prepare_next_tasks(
         config: The `Runnable` configuration.
         step: The current step.
         for_execution: Whether the tasks are being prepared for execution.
+        compute_cache_key: Whether to compute keys for executable tasks.
         store: An instance of BaseStore to make it available for usage within tasks.
         checkpointer: `Checkpointer` instance used for saving checkpoints.
         manager: The parent run manager to use for the tasks.
@@ -456,6 +460,7 @@ def prepare_next_tasks(
                 step=step,
                 stop=stop,
                 for_execution=for_execution,
+                compute_cache_key=compute_cache_key,
                 store=store,
                 checkpointer=checkpointer,
                 manager=manager,
@@ -502,6 +507,7 @@ def prepare_next_tasks(
             step=step,
             stop=stop,
             for_execution=for_execution,
+            compute_cache_key=compute_cache_key,
             store=store,
             checkpointer=checkpointer,
             manager=manager,
@@ -536,6 +542,7 @@ def prepare_single_task(
     step: int,
     stop: int,
     for_execution: bool,
+    compute_cache_key: bool = True,
     store: BaseStore | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     manager: None | ParentRunManager | AsyncParentRunManager = None,
@@ -562,6 +569,7 @@ def prepare_single_task(
             step=step,
             stop=stop,
             for_execution=for_execution,
+            compute_cache_key=compute_cache_key,
             store=store,
             checkpointer=checkpointer,
             manager=manager,
@@ -585,6 +593,7 @@ def prepare_single_task(
             processes=processes,
             stop=stop,
             for_execution=for_execution,
+            compute_cache_key=compute_cache_key,
             store=store,
             checkpointer=checkpointer,
             manager=manager,
@@ -666,7 +675,7 @@ def prepare_single_task(
                         metadata.update(proc.metadata)
                     writes: deque[tuple[str, Any]] = deque()
                     cache_policy = proc.cache_policy or cache_policy
-                    if cache_policy:
+                    if compute_cache_key and cache_policy:
                         args_key = cache_policy.key_func(val)
                         cache_key = CacheKey(
                             (
@@ -811,6 +820,7 @@ def prepare_push_task_functional(
     step: int,
     stop: int,
     for_execution: bool,
+    compute_cache_key: bool = True,
     store: BaseStore | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     manager: None | ParentRunManager | AsyncParentRunManager = None,
@@ -856,7 +866,7 @@ def prepare_push_task_functional(
     if for_execution:
         writes: deque[tuple[str, Any]] = deque()
         cache_policy = call.cache_policy or cache_policy
-        if cache_policy:
+        if compute_cache_key and cache_policy:
             args_key = cache_policy.key_func(*call.input[0], **call.input[1])
             cache_key: CacheKey | None = CacheKey(
                 (
@@ -949,6 +959,7 @@ def prepare_push_task_send(
     step: int,
     stop: int,
     for_execution: bool,
+    compute_cache_key: bool = True,
     store: BaseStore | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     manager: None | ParentRunManager | AsyncParentRunManager = None,
@@ -1017,7 +1028,7 @@ def prepare_push_task_send(
             metadata.update(proc.metadata)
         writes: deque[tuple[str, Any]] = deque()
         cache_policy = proc.cache_policy or cache_policy
-        if cache_policy:
+        if compute_cache_key and cache_policy:
             args_key = cache_policy.key_func(packet.arg)
             cache_key = CacheKey(
                 (
