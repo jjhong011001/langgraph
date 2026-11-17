@@ -485,12 +485,14 @@ class AsyncGraphRunStream:
             False if the graph is exhausted.
         """
         async with self._pump_cond:
-            if self._exhausted or self._graph_aiter is None:
+            if self._graph_aiter is None:
                 return False
             if self._pumping:
-                # Another task is pumping; wait for its progress signal.
+                # An exhausted iterator can still have finalization in flight.
                 await self._pump_cond.wait()
                 return not self._exhausted
+            if self._exhausted:
+                return False
             self._pumping = True
 
         try:

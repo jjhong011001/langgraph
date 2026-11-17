@@ -6,6 +6,7 @@ Type-narrowing is validated via `assert_type` calls in `_check_type_narrowing`.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import operator
 import sys
@@ -1363,4 +1364,54 @@ async def test_finalizer_error_is_terminal(async_mode: bool) -> None:
                     _ = run.output
                 assert caught.value is error
 
+    assert finalized == [True]
+
+
+@pytest.mark.anyio
+async def test_output_readers_wait_for_failing_async_finalizer() -> None:
+    finalizing = asyncio.Event()
+    release_finalizer = asyncio.Event()
+    second_read_started = asyncio.Event()
+    error = RuntimeError("finalization failed")
+    finalized = []
+
+    class Finalizer(StreamTransformer):
+        def init(self) -> dict[str, Any]:
+            return {}
+
+        def process(self, event: ProtocolEvent) -> bool:
+            return True
+
+        async def afinalize(self) -> None:
+            finalized.append(True)
+            finalizing.set()
+            await release_finalizer.wait()
+            raise error
+
+    graph = _make_simple_graph().compile()
+    async with await graph.astream_events(
+        _SIMPLE_INPUT, version="v3", transformers=[Finalizer]
+    ) as run:
+
+        async def read_output():
+            second_read_started.set()
+            return await run.output()
+
+        first = asyncio.create_task(run.output())
+        second = None
+        try:
+            await asyncio.wait_for(finalizing.wait(), timeout=5)
+            second = asyncio.create_task(read_output())
+            await asyncio.wait_for(second_read_started.wait(), timeout=5)
+            returned_early = second.done()
+        finally:
+            release_finalizer.set()
+            readers = (first, second) if second is not None else (first,)
+            results = await asyncio.wait_for(
+                asyncio.gather(*readers, return_exceptions=True),
+                timeout=5,
+            )
+
+        assert not returned_early
+        assert results == [error, error]
     assert finalized == [True]
